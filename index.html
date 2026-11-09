@@ -168,9 +168,35 @@
   .flow-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
   .flow-row:last-child { border-bottom: 0; font-weight: 700; }
   .tip { background: var(--accent-soft); border-radius: 12px; padding: 12px; margin-top: 14px; font-size: .9rem; }
+
+  body.locked header, body.locked main, body.locked nav.tabs { display: none; }
+  .lock {
+    position: fixed; inset: 0; z-index: 50; background: var(--bg);
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  body.locked .lock { display: flex; }
+  .lock-box { width: 100%; max-width: 340px; text-align: center; }
+  .lock-ico { font-size: 3rem; }
+  .lock-box h2 { margin: 8px 0 4px; font-size: 1.4rem; }
+  .lock-box p { color: var(--muted); margin: 0 0 16px; font-size: .95rem; min-height: 1.4em; }
+  .lock-box p.err { color: var(--spend); font-weight: 600; }
+  .lock-box input { text-align: center; font-size: 1.6rem; letter-spacing: .4em; margin-bottom: 10px; }
+  .link { border: 0; background: transparent; color: var(--muted); text-decoration: underline; margin-top: 18px; font-size: .9rem; }
 </style>
 </head>
-<body>
+<body class="locked">
+
+<div class="lock" id="lock">
+  <form class="lock-box" id="lock-form" autocomplete="off">
+    <div class="lock-ico">🔒</div>
+    <h2 id="lock-title">Mis Gastos</h2>
+    <p id="lock-msg">Escribe tu PIN</p>
+    <input id="lock-pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="••••" aria-label="PIN">
+    <input id="lock-pin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Repite" aria-label="Repite el PIN" hidden>
+    <button class="btn" type="submit" id="lock-btn">Entrar</button>
+    <button class="link" type="button" id="lock-alt">Olvidé mi PIN</button>
+  </form>
+</div>
 
 <header>
   <h1>💰 Mis Gastos</h1>
@@ -297,6 +323,16 @@
         <button class="btn-ghost" id="b-import" type="button">⬆ Importar</button>
       </div>
       <input type="file" id="file" accept="application/json" hidden>
+    </div>
+    <div class="card">
+      <h2>Seguridad</h2>
+      <p style="font-size:.85rem;color:var(--muted);margin:0 0 10px">
+        La app se bloquea con tu PIN al abrirla y cuando la dejas en segundo plano.
+      </p>
+      <div class="row">
+        <button class="btn-ghost" id="b-lock" type="button">🔒 Bloquear ahora</button>
+        <button class="btn-ghost" id="b-pin" type="button">🔑 Cambiar PIN</button>
+      </div>
     </div>
   </section>
 </main>
@@ -623,6 +659,88 @@
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', renderCharts);
   load(); render();
   if (typeof Chart === 'undefined') window.addEventListener('load', renderCharts);
+
+  // ---------- bloqueo con PIN ----------
+  const PIN_KEY = 'misgastos.pin';
+  const LOCK_AFTER_MS = 60 * 1000; // bloquear tras 1 min en segundo plano
+  let lockMode = 'unlock'; // unlock | setup | change
+  let fails = 0, waitUntil = 0, hiddenAt = 0;
+  const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch { return false; } };
+
+  async function hashPin(pin, salt) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + ':' + pin));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  function stored() { try { return JSON.parse(lsGet(PIN_KEY)); } catch { return null; } }
+
+  function setLockUI(mode, msg, err) {
+    lockMode = mode;
+    const setup = mode === 'setup';
+    $('#lock-title').textContent = setup ? 'Crea tu PIN' : mode === 'change' ? 'PIN actual' : 'Mis Gastos';
+    $('#lock-msg').textContent = msg || (setup ? 'Elige un PIN de 4 a 8 números' : 'Escribe tu PIN');
+    $('#lock-msg').className = err ? 'err' : '';
+    $('#lock-pin2').hidden = !setup;
+    $('#lock-btn').textContent = setup ? 'Guardar PIN' : mode === 'change' ? 'Continuar' : 'Entrar';
+    // "Olvidé mi PIN" al desbloquear; "Cancelar" al cambiar PIN; nada al crear el primero
+    $('#lock-alt').textContent = mode === 'unlock' ? 'Olvidé mi PIN' : 'Cancelar';
+    $('#lock-alt').hidden = mode === 'setup' && !stored();
+    $('#lock-pin').value = ''; $('#lock-pin2').value = '';
+    setTimeout(() => $('#lock-pin').focus(), 50);
+  }
+  function lock(mode = stored() ? 'unlock' : 'setup', msg) {
+    document.body.classList.add('locked');
+    setLockUI(mode, msg);
+  }
+  function unlock() {
+    document.body.classList.remove('locked');
+    fails = 0;
+    renderCharts();
+  }
+
+  $('#lock-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const pin = $('#lock-pin').value.trim();
+    if (lockMode === 'setup') {
+      if (!/^\d{4,8}$/.test(pin)) return setLockUI('setup', 'El PIN debe tener de 4 a 8 números', true);
+      if (pin !== $('#lock-pin2').value.trim()) return setLockUI('setup', 'Los PIN no coinciden, inténtalo de nuevo', true);
+      const salt = crypto.getRandomValues(new Uint32Array(4)).join('-');
+      if (!lsSet(PIN_KEY, JSON.stringify({ salt, hash: await hashPin(pin, salt) })))
+        return setLockUI('setup', 'No se pudo guardar el PIN en este navegador', true);
+      unlock(); toast('PIN guardado ✓');
+      return;
+    }
+    if (Date.now() < waitUntil) return setLockUI(lockMode, `Demasiados intentos. Espera ${Math.ceil((waitUntil - Date.now()) / 1000)} s`, true);
+    const s = stored();
+    if (s && await hashPin(pin, s.salt) === s.hash) {
+      fails = 0;
+      if (lockMode === 'change') setLockUI('setup', 'Ahora elige tu nuevo PIN');
+      else unlock();
+    } else {
+      fails++;
+      if (fails >= 5) { waitUntil = Date.now() + 30000; fails = 0; }
+      setLockUI(lockMode, fails === 0 ? 'Demasiados intentos. Espera 30 s' : 'PIN incorrecto', true);
+    }
+  });
+
+  $('#lock-alt').addEventListener('click', () => {
+    if (lockMode !== 'unlock') { unlock(); return; } // cancelar cambio de PIN
+    if (!confirm('Si olvidaste tu PIN, la única forma de entrar es BORRAR todos tus gastos e ingresos guardados en este teléfono.\n\n¿Borrar todo y crear un PIN nuevo?')) return;
+    if (!confirm('¿Seguro? Esta acción no se puede deshacer.')) return;
+    try { localStorage.removeItem(KEY); localStorage.removeItem(PIN_KEY); } catch {}
+    data = []; render();
+    setLockUI('setup', 'Datos borrados. Crea un PIN nuevo');
+  });
+
+  $('#b-lock').addEventListener('click', () => lock());
+  $('#b-pin').addEventListener('click', () => lock('change'));
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) hiddenAt = Date.now();
+    else if (hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MS && !document.body.classList.contains('locked')) lock();
+  });
+
+  lock();
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
