@@ -159,6 +159,15 @@
     font-weight: 600; opacity: 0; pointer-events: none; transition: opacity .25s;
   }
   .toast.show { opacity: 1; }
+
+  .left-hero { text-align: center; padding: 8px 0 4px; }
+  .left-hero .lbl { font-size: .9rem; color: var(--muted); font-weight: 600; }
+  .left-hero .big { font-size: 2.4rem; font-weight: 800; line-height: 1.15; margin: 4px 0; word-break: break-word; }
+  .left-hero .sub { font-size: .9rem; color: var(--muted); }
+  .flow { margin-top: 14px; }
+  .flow-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .flow-row:last-child { border-bottom: 0; font-weight: 700; }
+  .tip { background: var(--accent-soft); border-radius: 12px; padding: 12px; margin-top: 14px; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -176,7 +185,7 @@
       <div class="stats">
         <div class="stat"><div class="lbl">Ingresos</div><div class="val income" id="s-income">$0</div></div>
         <div class="stat"><div class="lbl">Gastos</div><div class="val spend" id="s-spend">$0</div></div>
-        <div class="stat"><div class="lbl">Ahorro</div><div class="val save" id="s-save">$0</div></div>
+        <div class="stat"><div class="lbl">Te queda</div><div class="val save" id="s-save">$0</div></div>
         <div class="stat"><div class="lbl">Gasto promedio / día</div><div class="val" id="s-avg">$0</div></div>
       </div>
       <div class="bar"><span id="bar-spend" style="width:0%"></span></div>
@@ -208,6 +217,34 @@
     <div class="card">
       <h2>¿Cómo pago?</h2>
       <div class="chart-wrap" style="height:200px"><canvas id="c-pay"></canvas></div>
+    </div>
+  </section>
+
+  <!-- INGRESOS -->
+  <section id="v-ingresos" class="view">
+    <div class="card">
+      <div class="left-hero">
+        <div class="lbl">Te queda este mes</div>
+        <div class="big save" id="i-left">$0</div>
+        <div class="sub" id="i-left-pct">de $0 que ingresaste</div>
+      </div>
+      <div class="bar"><span id="i-bar" style="width:0%"></span></div>
+      <div class="bar-legend">
+        <span class="spend" id="i-used">Usado 0%</span>
+        <span class="save" id="i-free">Disponible 0%</span>
+      </div>
+      <div class="flow">
+        <div class="flow-row"><span>Ingresos</span><span class="income" id="i-in">$0</span></div>
+        <div class="flow-row"><span>Gastos</span><span class="spend" id="i-out">−$0</span></div>
+        <div class="flow-row"><span>Te queda</span><span id="i-left2">$0</span></div>
+      </div>
+      <div class="tip" id="i-tip" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <h2>Ingresos del mes</h2>
+      <div id="inc-list"></div>
+      <button class="btn" type="button" id="b-add-inc">+ Añadir ingreso</button>
     </div>
   </section>
 
@@ -266,6 +303,7 @@
 
 <nav class="tabs">
   <button class="on" data-view="v-resumen"><span class="i">📊</span>Resumen</button>
+  <button data-view="v-ingresos"><span class="i">💵</span>Ingresos</button>
   <button data-view="v-add"><span class="i">➕</span>Añadir</button>
   <button data-view="v-list"><span class="i">📋</span>Movimientos</button>
 </nav>
@@ -331,13 +369,16 @@
   $('#f-date').value = today();
 
   let type = 'gasto';
-  $('#type-seg').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    type = b.dataset.type;
+  function setType(t) {
+    const b = document.querySelector(`#type-seg button[data-type="${t}"]`);
+    type = t;
     document.querySelectorAll('#type-seg button').forEach(x => x.classList.toggle('on', x === b));
     $('#gasto-fields').style.display = type === 'gasto' ? '' : 'none';
     $('#ingreso-fields').style.display = type === 'ingreso' ? '' : 'none';
     $('#f-submit').textContent = type === 'gasto' ? 'Guardar gasto' : 'Guardar ingreso';
+  }
+  $('#type-seg').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (b) setType(b.dataset.type);
   });
 
   $('#form').addEventListener('submit', e => {
@@ -360,13 +401,15 @@
   });
 
   // ---------- tabs ----------
-  document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('nav.tabs button').forEach(x => x.classList.toggle('on', x === b));
-    document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === b.dataset.view));
+  function showView(id) {
+    document.querySelectorAll('nav.tabs button').forEach(x => x.classList.toggle('on', x.dataset.view === id));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === id));
     window.scrollTo(0, 0);
-    if (b.dataset.view === 'v-add') setTimeout(() => $('#f-amount').focus(), 50);
-    if (b.dataset.view === 'v-resumen') renderCharts();
-  }));
+    if (id === 'v-add') setTimeout(() => $('#f-amount').focus(), 50);
+    if (id === 'v-resumen') renderCharts();
+  }
+  document.querySelectorAll('nav.tabs button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+  $('#b-add-inc').addEventListener('click', () => { setType('ingreso'); showView('v-add'); });
 
   // ---------- month selector ----------
   let currentMonth = monthOf(today());
@@ -380,8 +423,8 @@
 
   // ---------- list ----------
   const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  function renderList(items) {
-    if (!items.length) { $('#list').innerHTML = '<div class="empty">Aún no hay movimientos este mes.<br>Toca ➕ Añadir para empezar.</div>'; return; }
+  function renderList(items, el = $('#list'), emptyMsg = 'Aún no hay movimientos este mes.<br>Toca ➕ Añadir para empezar.') {
+    if (!items.length) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
     const sorted = [...items].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
     let html = '', lastDay = '';
     for (const it of sorted) {
@@ -403,13 +446,46 @@
       </li>`;
     }
     html += '</ul>';
-    $('#list').innerHTML = html;
+    el.innerHTML = html;
   }
-  $('#list').addEventListener('click', e => {
+  const onDelete = e => {
     const b = e.target.closest('.del'); if (!b) return;
     if (!confirm('¿Eliminar este movimiento?')) return;
     data = data.filter(x => x.id !== b.dataset.id); save(); render(); toast('Eliminado');
-  });
+  };
+  $('#list').addEventListener('click', onDelete);
+  $('#inc-list').addEventListener('click', onDelete);
+
+  // ---------- ingresos / te queda ----------
+  function renderIngresos({ income, spend, saved, y, m }) {
+    renderList(monthItems.filter(x => x.type === 'ingreso'), $('#inc-list'),
+      'Aún no registras ingresos este mes.');
+    const neg = saved < 0;
+    $('#i-left').textContent = (neg ? '−' : '') + money(Math.abs(saved));
+    $('#i-left').className = 'big ' + (neg ? 'spend' : 'save');
+    $('#i-left-pct').textContent = income > 0
+      ? `${neg ? 'Te pasaste' : 'Es el'} ${(Math.abs(saved) / income * 100).toFixed(1)}% de ${money(income)} que ingresaste`
+      : 'Registra tus ingresos para saber cuánto te queda';
+    const used = income > 0 ? spend / income * 100 : 0;
+    $('#i-bar').style.width = Math.min(100, used) + '%';
+    $('#i-used').textContent = `Usado ${used.toFixed(1)}%`;
+    $('#i-free').textContent = `Disponible ${Math.max(0, 100 - used).toFixed(1)}%`;
+    $('#i-in').textContent = money(income);
+    $('#i-out').textContent = '−' + money(spend);
+    $('#i-left2').textContent = (neg ? '−' : '') + money(Math.abs(saved));
+    $('#i-left2').className = neg ? 'spend' : 'save';
+
+    // cuánto puedes gastar por día lo que resta del mes
+    const tip = $('#i-tip');
+    const isCur = currentMonth === monthOf(today());
+    if (income > 0 && isCur) {
+      const daysLeft = new Date(y, m, 0).getDate() - new Date().getDate() + 1;
+      tip.style.display = 'block';
+      tip.textContent = neg
+        ? `⚠️ Ya gastaste ${money(-saved)} más de lo que ingresaste este mes.`
+        : `💡 Te quedan ${daysLeft} día${daysLeft === 1 ? '' : 's'} del mes: puedes gastar hasta ${money(saved / daysLeft)} por día.`;
+    } else tip.style.display = 'none';
+  }
 
   // ---------- summary ----------
   let monthItems = [];
@@ -540,6 +616,7 @@
     renderMonths();
     summary = renderSummary();
     renderList(monthItems);
+    renderIngresos(summary);
     renderCharts();
   }
 
